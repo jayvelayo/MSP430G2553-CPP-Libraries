@@ -8,52 +8,62 @@
 CircularBuffer::CircularBuffer() {
 	startIndex = 0;
 	stopIndex = 0;
-	isFull = FALSE;
+	isFull = true;
 }
 
+/*
+ * enqueue:
+ */
 bool CircularBuffer::enqueue(char newByte) {
 	if(isFull) {
-		return FALSE;
+		return false;
 	}
 	else {
 		charBuffer[stopIndex++]= newByte;
 		if(stopIndex >= MAX_BUFF_SIZE) { stopIndex = 0; }
-		if(stopIndex == startIndex) { isFull = TRUE; }
-		return TRUE;
+		if(stopIndex == startIndex) { isFull = true; }
+		return true;
 	}
 }
 
 char CircularBuffer::tryDequeue(void) {
-	if(CircularBuffer::getBufferLength() == 0) {
-		return '0';
+	if(bufferSize() == 0) {
+		return '\0';
 	}
 	else {
 		char returnChar = charBuffer[startIndex++];
 		if(startIndex>=MAX_BUFF_SIZE) {startIndex = 0;}
-		if(isFull) { isFull=FALSE; }
+		if(isFull) { isFull=false; }
 		return returnChar;
 	}
 }
 
-int CircularBuffer::getBufferLength() {
+int CircularBuffer::bufferSize() {
 	if(isFull) return MAX_BUFF_SIZE;
 	else if (stopIndex >= startIndex) return stopIndex-startIndex;
 	else return (MAX_BUFF_SIZE - startIndex - stopIndex);
 }
 
-bool CircularBuffer::isEmpty() {
-	if (startIndex==stopIndex && !isFull) return TRUE;
-	else return FALSE;
-}
+
 
 SerialPort::SerialPort() {
+	thisInstance = this;
 }
 
-void SerialPort::begin() {
+SerialPort* SerialPort::thisInstance = NULL;
+
+void SerialPort::begin(long baudrate) {
+	int index = 0;
+	unsigned const int size = sizeof(baud_settings)/sizeof(baud_settings[0]);
+
+	for (unsigned int i = 0; i < size; i++) {
+		if (baud_settings[i].baud == baudrate) index = i;
+	}
+
 	UCA0CTL1 |= UCSSEL_2 + UCSWRST;                     // SMCLK
-    UCA0BR0 = 104;                            // 1MHz 9600
-    UCA0BR1 = 0;                              // 1MHz 9600
-    UCA0MCTL = UCBRS0;                        // Modulation UCBRSx = 1
+    UCA0BR0 = (baud_settings[index].UCBRx & 0xff);                            // 1MHz 9600
+    UCA0BR1 = (baud_settings[index].UCBRx >> 8) & 0xff; ;                              // 1MHz 9600
+    UCA0MCTL = baud_settings[index].UCBRSx;                        // Modulation UCBRSx = 1
     P1DIR |= BIT1+BIT2;
     P1SEL |= BIT1 + BIT2 ;                     // P1.1 = RXD, P1.2=TXD
     P1SEL2 |= BIT1 + BIT2 ;                    // P1.1 = RXD, P1.2=TXD
@@ -61,9 +71,40 @@ void SerialPort::begin() {
     IE2 |= UCA0RXIE;                          // Enable USCI_A0 RX interrupt
 }
 
-void SerialPort::txChar(char c) {
-	while (!(IFG2&UCA0TXIFG));
+void SerialPort::printChar(char c) {
+	while (!(IFG2&IFG2&UCA0TXIFG));
     UCA0TXBUF = c;
 }
 
+void SerialPort::printLine(std::string &str) {
+	for(unsigned int i = 0; i < str.size(); i++){
+		printChar(str[i]);
+	}
+	printChar('\r');
+	printChar('\n');
+}
+
+char SerialPort::readChar() {
+	return circBuffer.tryDequeue();
+}
+
+std::string SerialPort::readLine(){
+	std::string str = "";
+	char c = '\0';
+
+	while(c != '\n' || c!= '\0') {
+		c = circBuffer.tryDequeue();
+		str+=c;
+	} //what if de-q is faster than data rx
+
+	return str;
+}
+
+#pragma vector=USCIAB0RX_VECTOR
+__interrupt void SerialPort::USCI0RX_ISR(void) {
+
+	if(thisInstance != NULL) {
+ 	   thisInstance->circBuffer.enqueue(UCA0RXBUF);
+ 	}
+}
 
